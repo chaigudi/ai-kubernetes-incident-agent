@@ -1,0 +1,355 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ai-sre-lab
+  namespace: ai-sre-lab
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: lab-limits
+  namespace: ai-sre-lab
+spec:
+  hard:
+    requests.cpu: 1500m
+    requests.memory: 2Gi
+    limits.cpu: '4'
+    limits.memory: 4Gi
+    pods: '12'
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo-code
+  namespace: ai-sre-lab
+data:
+  server.py: "\"\"\"Tiny synthetic checkout service. Infrastructure is the exercise,\
+    \ not app code.\"\"\"\nimport collections\nfrom http.server import BaseHTTPRequestHandler,\
+    \ ThreadingHTTPServer\nimport json\nimport os\nimport threading\nimport time\n\
+    import urllib.request\n\nSERVICE = os.environ.get('SERVICE', 'orders')\nUPSTREAM\
+    \ = os.environ.get('INVENTORY_URL', 'http://inventory:8080/stock')\nCOUNTS = collections.Counter()\n\
+    LOCK = threading.Lock()\n\nclass Handler(BaseHTTPRequestHandler):\n    def log_message(self,\
+    \ *args):\n        pass\n\n    def do_GET(self):\n        start = time.monotonic()\n\
+    \        status = 200\n        data = {'service': SERVICE, 'status': 'ok'}\n \
+    \       content_type = 'application/json'\n        if self.path == '/metrics':\n\
+    \            with LOCK:\n                lines = [f'lab_requests_total{{service=\"\
+    {SERVICE}\",status=\"{code}\"}} {count}' for code,count in COUNTS.items()]\n \
+    \           payload = ('# TYPE lab_requests_total counter\\n' + '\\n'.join(lines)\
+    \ + '\\n').encode()\n            content_type = 'text/plain; version=0.0.4'\n\
+    \        else:\n            if self.path in ('/healthz', '/readyz'):\n       \
+    \         pass\n            elif self.path == '/stock' and SERVICE == 'inventory':\n\
+    \                data['stock'] = 42\n            elif self.path == '/checkout'\
+    \ and SERVICE == 'orders':\n                try:\n                    with urllib.request.urlopen(UPSTREAM,\
+    \ timeout=1.5) as response:\n                        inventory = json.load(response)\n\
+    \                    data = {'status':'order-confirmed', 'stock':inventory['stock']}\n\
+    \                except Exception as exc:\n                    status = 503\n\
+    \                    data = {'status':'checkout-unavailable', 'dependency':UPSTREAM,\
+    \ 'error':str(exc)[:250]}\n            else:\n                status = 404\n \
+    \               data = {'error':'not-found'}\n            payload = json.dumps(data).encode()\n\
+    \            if self.path not in ('/healthz','/readyz'):\n                with\
+    \ LOCK: COUNTS[str(status)] += 1\n                print(json.dumps({'timestamp':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()),'service':SERVICE,'path':self.path,'status':status,'duration_ms':round((time.monotonic()-start)*1000,2),'detail':data}),flush=True)\n\
+    \        self.send_response(status)\n        self.send_header('Content-Type',content_type)\n\
+    \        self.send_header('Content-Length',str(len(payload)))\n        self.end_headers()\n\
+    \        self.wfile.write(payload)\n\nThreadingHTTPServer(('0.0.0.0',8080), Handler).serve_forever()\n"
+  traffic.py: "import json\nimport time\nimport urllib.request\nwhile True:\n    start=time.monotonic()\n\
+    \    try:\n        with urllib.request.urlopen('http://orders:8080/checkout',timeout=3)\
+    \ as response:\n            status=response.status\n            body=response.read().decode()\n\
+    \    except Exception as exc:\n        status=getattr(exc,'code',0)\n        body=str(exc)\n\
+    \    print(json.dumps({'timestamp':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()),'path':'/checkout','status':status,'duration_ms':round((time.monotonic()-start)*1000,2),'body':body[:250]}),flush=True)\n\
+    \    time.sleep(2)\n"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orders
+  namespace: ai-sre-lab
+spec:
+  selector:
+    app: orders
+  ports:
+  - port: 8080
+    targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders
+  namespace: ai-sre-lab
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: orders
+  template:
+    metadata:
+      labels:
+        app: orders
+    spec:
+      automountServiceAccountToken: false
+      containers:
+      - name: orders
+        image: python:3.12-slim
+        command:
+        - python
+        - -u
+        - /app/server.py
+        volumeMounts:
+        - name: code
+          mountPath: /app
+          readOnly: true
+        ports:
+        - containerPort: 8080
+        env:
+        - name: SERVICE
+          value: orders
+        - name: INVENTORY_URL
+          value: http://inventory:8080/stock
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8080
+          periodSeconds: 3
+          failureThreshold: 2
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 300m
+            memory: 192Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          runAsNonRoot: true
+          runAsUser: 1000
+          seccompProfile:
+            type: RuntimeDefault
+      volumes:
+      - name: code
+        configMap:
+          name: demo-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: inventory
+  namespace: ai-sre-lab
+spec:
+  selector:
+    app: inventory
+  ports:
+  - port: 8080
+    targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventory
+  namespace: ai-sre-lab
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: inventory
+  template:
+    metadata:
+      labels:
+        app: inventory
+    spec:
+      automountServiceAccountToken: false
+      containers:
+      - name: inventory
+        image: python:3.12-slim
+        command:
+        - python
+        - -u
+        - /app/server.py
+        volumeMounts:
+        - name: code
+          mountPath: /app
+          readOnly: true
+        ports:
+        - containerPort: 8080
+        env:
+        - name: SERVICE
+          value: inventory
+        - name: INVENTORY_URL
+          value: http://inventory:8080/stock
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8080
+          periodSeconds: 3
+          failureThreshold: 2
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 300m
+            memory: 192Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          runAsNonRoot: true
+          runAsUser: 1000
+          seccompProfile:
+            type: RuntimeDefault
+      volumes:
+      - name: code
+        configMap:
+          name: demo-code
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traffic
+  namespace: ai-sre-lab
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: traffic
+  template:
+    metadata:
+      labels:
+        app: traffic
+    spec:
+      automountServiceAccountToken: false
+      containers:
+      - name: traffic
+        image: python:3.12-slim
+        command:
+        - python
+        - -u
+        - /app/traffic.py
+        volumeMounts:
+        - name: code
+          mountPath: /app
+          readOnly: true
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 300m
+            memory: 192Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          runAsNonRoot: true
+          runAsUser: 1000
+          seccompProfile:
+            type: RuntimeDefault
+      volumes:
+      - name: code
+        configMap:
+          name: demo-code
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: ai-sre-lab
+data:
+  prometheus.yml: "global:\n  scrape_interval: 5s\nscrape_configs:\n  - job_name:\
+    \ demo\n    static_configs:\n      - targets: [\"orders:8080\", \"inventory:8080\"\
+    ]\n"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: ai-sre-lab
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      automountServiceAccountToken: false
+      containers:
+      - name: prometheus
+        image: prom/prometheus:v3.5.0
+        args:
+        - --config.file=/etc/prometheus/prometheus.yml
+        - --storage.tsdb.path=/prometheus
+        - --storage.tsdb.retention.time=2h
+        - --storage.tsdb.retention.size=128MB
+        ports:
+        - containerPort: 9090
+        volumeMounts:
+        - name: config
+          mountPath: /etc/prometheus
+          readOnly: true
+        - name: data
+          mountPath: /prometheus
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 384Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          runAsNonRoot: true
+          runAsUser: 1000
+          seccompProfile:
+            type: RuntimeDefault
+      volumes:
+      - name: config
+        configMap:
+          name: prometheus-config
+      - name: data
+        emptyDir:
+          sizeLimit: 256Mi
+      securityContext:
+        fsGroup: 1000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: ai-sre-lab
+spec:
+  selector:
+    app: prometheus
+  ports:
+  - port: 9090
+    targetPort: 9090
