@@ -4,7 +4,7 @@ Use only the isolated `ai-sre-lab` namespace. Activate one fault at a time, allo
 the deployment/endpoints to settle, and run a fresh investigator Pod. The commands
 below are human-operated lab controls, never agent tools. Reset between cases.
 
-## 1. Incorrect dependency hostname — evaluated with the agent
+## 1. Incorrect dependency hostname â€” evaluated with the agent
 
 ```bash
 kubectl -n ai-sre-lab set env deployment/orders INVENTORY_URL=http://inventory-typo:8080/stock
@@ -21,9 +21,7 @@ a failure of the cluster's DNS infrastructure.
 kubectl -n ai-sre-lab patch service inventory --type=merge -p '{"spec":{"selector":{"app":"inventory-mismatch"}}}'
 ```
 
-Expected: inventory has no selected endpoints and checkout fails. The current
-agent should report its lack of Service/EndpointSlice inspection tools instead
-of pretending to have confirmed the selector configuration.
+Expected: inventory has no selected endpoints and checkout fails. The Day 1 agent cannot inspect Service configuration. Day 2 can inspect it, but its executor only supports the known URL correction and must not repair this selector fault.
 
 ## 3. Incorrect readiness path
 

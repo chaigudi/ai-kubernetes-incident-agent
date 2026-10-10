@@ -1,107 +1,76 @@
-# Setup
+# Shared setup
 
-Use a disposable Kubernetes cluster with outbound HTTPS access. The original lab
-used one EC2 t3.large, Amazon Linux 2023, and K3s. This repository does not provision
-AWS resources or include account-specific infrastructure state.
+Use a disposable Kubernetes cluster with outbound HTTPS. The original lab ran K3s on one EC2 t3.large with Amazon Linux 2023. These files do not provision AWS resources; use your own disposable cluster.
 
-## Optional EC2 bootstrap
+## 1. Prepare Kubernetes
 
-Create a dedicated EC2 instance with an SSM instance profile and no inbound ports.
-Use Session Manager for access. On a fresh Amazon Linux 2023 lab host, review and
-run `sudo bash lab/bootstrap-ec2.sh`. It installs the K3s stable channel and starts
-an eight-hour shutdown timer. Configure EC2's instance-initiated shutdown behavior
-to **stop**. Stopped instances still incur storage charges; terminate the lab when
-finished. Bootstrap needs outbound access to package repositories and K3s downloads.
+For EC2, use a dedicated host, Session Manager access and an appropriate SSM instance profile. Review `lab/bootstrap-ec2.sh` before running it on a fresh Amazon Linux 2023 host. It installs the K3s stable channel and configures an eight-hour shutdown timer. Set the instance's shutdown behavior to stop.
 
-The original cluster reported K3s v1.36.5+k3s1. The stable channel and container
-base tags can change; the scripts do not guarantee an identical future runtime.
+Stopping still leaves billable storage. Follow [cleanup](CLEANUP.md) when finished. No existing account-wide VPC, IAM or EKS resources should be removed as part of this lab.
 
-## Deploy the application and agent identity
+The original runtime reported K3s v1.36.5+k3s1. Stable-channel installs and container tags can change, so this is not an exact runtime lockfile.
 
-Run from the repository root with kubectl targeting your disposable cluster:
+## 2. Clone and deploy the demo
+
+Run on the operator host with kubectl pointing at the intended lab cluster:
 
 ```bash
+git clone https://github.com/chaigudi/ai-kubernetes-incident-agent.git
+cd ai-kubernetes-incident-agent
+kubectl config current-context
 kubectl apply -f lab/demo.yaml
 kubectl wait --for=condition=Available deployment --all -n ai-sre-lab --timeout=180s
-kubectl apply -f deploy/rbac.yaml
 ```
 
-The RoleBinding in `ai-sre-lab` grants read access to the `incident-agent`
-ServiceAccount in `ai-agent`. The agent has no Secret-read, Pod-exec, or workload
-write permissions. Its preflight checks use its actual in-cluster identity.
+The shared application is synthetic: traffic calls orders, and orders calls inventory. Prometheus collects basic metrics. No real customer data is needed.
 
-## Supply the API credential
+## 3. Choose a milestone
 
-Run in Bash. Enter the key in the hidden prompt, not in source code:
+For the latest workflow:
+
+```bash
+kubectl apply -f days/day-02-approved-remediation/deploy/rbac.yaml
+```
+
+For the original read-only milestone, use `days/day-01-incident-detection/deploy/rbac.yaml` instead. Both create the `ai-agent` namespace and `incident-agent` identity. The RoleBinding connects that identity to the application namespace. Use one milestone at a time.
+
+If downgrading from Day 2, its additional configuration-reader Role/RoleBinding and executor permissions remain until explicitly deleted; applying Day 1 does not remove additive permissions.
+
+## 4. Create the model Secret
+
+Run in Bash; input stays out of shell history:
 
 ```bash
 read -rsp 'KodeKey API key: ' KODEKEY_API_KEY
 echo
 printf '%s' "$KODEKEY_API_KEY" |
-  kubectl -n ai-agent create secret generic kodekey --from-file=api-key=/dev/stdin
+  kubectl create secret generic kodekey -n ai-agent --from-file=api-key=/dev/stdin --dry-run=client -o yaml |
+  kubectl apply -f -
 unset KODEKEY_API_KEY
 ```
 
-The Pod mounts that specific Secret. The agent process can read its mounted key,
-but cannot retrieve Secrets through the Kubernetes API. The key never belongs
-in model messages, source control, or screenshots.
+The investigator mounts this key but cannot read Secrets through the Kubernetes API. Never commit the key or paste it into reports. The executor does not need it.
 
-## Run an investigation
+Each day's `deploy/agent.yaml` uses `https://api.ai.kodekloud.com/v1` through the OpenAI-compatible client. The tested model was `gpt-6-luna`; choose a model available to your account by editing `MODEL`. A 401 from the model API is separate from Kubernetes RBAC.
 
-Set `MODEL` and `INCIDENT` in `deploy/agent.yaml` to a model your KodeKey plan
-supports and the symptom you want investigated. The tested model was `gpt-6-luna`.
-For a healthy baseline, use: `Check whether checkout appears healthy. Inspect
-recent application logs and events.`
+## 5. Follow a day
 
-```bash
-kubectl apply -f deploy/agent.yaml
-kubectl logs -f incident-investigator -n ai-agent --pod-running-timeout=120s
-```
+- [Day 1: investigation](../days/day-01-incident-detection/README.md)
+- [Day 2: approved remediation](../days/day-02-approved-remediation/README.md)
 
-Each Pod runs once. To investigate again, save its current report and recreate it:
+Agent Pods run once. The Day 2 launcher archives the old report and recreates the Pod. Startup installs pinned Python dependencies and may take a few minutes. Evidence timestamps matter; old failures can remain in the log window after recovery.
+
+## Develop locally
 
 ```bash
-mkdir -p reports
-kubectl logs incident-investigator -n ai-agent > reports/latest.txt
-kubectl delete pod incident-investigator -n ai-agent
-kubectl apply -f deploy/agent.yaml
-kubectl logs -f incident-investigator -n ai-agent --pod-running-timeout=120s
+python -m venv .venv
+# Activate this environment using your shell's activation command.
+pip install -r requirements.txt
+python -m unittest discover -s days/day-01-incident-detection/tests -v
+python -m unittest discover -s days/day-02-approved-remediation/tests -v
+python scripts/render.py
 ```
 
-Check evidence timestamps. Applying an unchanged manifest does not rerun a
-completed Pod. Earlier errors may remain in the five-minute log window after repair.
+Edit Python source rather than embedded ConfigMap strings. The render script refreshes both milestone manifests and the shared application. Recreate Pods to load changes. Run milestone tests separately to avoid loading two modules with the same name into one Python process.
 
-## Modify and test
-
-Edit `incident_agent.py`, run the tests, then run `python scripts/render.py` to
-refresh the source embedded in the deployment ConfigMap. Recreate the agent Pod
-to run the changed version. App source changes similarly require rendering and
-restarting the affected demo deployments.
-
-The loop caps model requests at 4, tool attempts at 6, completion tokens at 1200
-per request, and serialized input at 60,000 characters. It checks a 180-second
-deadline between operations; the Pod has a 360-second active deadline including
-startup. SDK retries are disabled. These are resource bounds, not a dollar cap.
-
-Logs are limited to 50 recent lines, 12,000 bytes fetched, and 8,000 characters
-returned. The agent can only read logs for pods in its latest namespace listing.
-Events are bounded and filtered to a recent window. Pagination/truncation is
-reported. This version cannot inspect Service selectors or deployment settings.
-
-Dependencies are installed at startup for simplicity. For a production design,
-build an image, pin digests, enforce egress policy, add broader credential/PII
-redaction, and evaluate prompt-injection and failure handling. A system prompt
-alone does not guarantee prompt-injection resistance.
-
-## Cleanup
-
-After exporting anything needed from this disposable lab:
-
-```bash
-kubectl delete -f deploy/agent.yaml --ignore-not-found
-kubectl delete namespace ai-agent ai-sre-lab
-```
-
-This removes all resources in both lab namespaces, including the API-key Secret.
-If using EC2, stop or terminate the dedicated instance separately; confirm that
-attached storage and any other billable resources are cleaned up.
+Both agents bound requests, log size and execution time. These are not billing guarantees. Production hardening would also require pinned image digests, admission and network controls, broader data redaction, and independent evaluation.

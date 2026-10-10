@@ -14,3 +14,6 @@ kubeconfig*
 reports/
 secret*.yaml
 secret*.json
+
+plan.json
+remediation-audit/
