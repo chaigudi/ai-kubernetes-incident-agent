@@ -1,4 +1,4 @@
-# Day 2 — Approve a fix and verify recovery
+# Day 2 - Approve a fix and verify recovery
 
 **Completed: October 6, 2026.** Goal: extend the investigator with configuration evidence and a narrowly scoped, human-approved repair.
 

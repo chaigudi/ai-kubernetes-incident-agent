@@ -2,7 +2,7 @@
 
 These are measurements from a small synthetic lab, not production accuracy benchmarks.
 
-## Day 1 â€” October 4, 2026
+## Day 1 - October 4, 2026
 
 Orders used an incorrect inventory hostname. Pods remained Running and Ready while checkout returned 503. The investigator correlated orders and traffic logs and identified the failed dependency lookup.
 
@@ -16,7 +16,7 @@ Orders used an incorrect inventory hostname. Pods remained Running and Ready whi
 
 The application was restored using administrative lab controls, followed by six successful checkout probes. The agent did not perform that repair. Investigation time is not MTTR.
 
-## Day 2 â€” October 6, 2026
+## Day 2 - October 6, 2026
 
 The agent gained configuration inspection and a fixed proposal tool. A healthy case returned `no_change_needed`. The supported fault produced a proposal with fresh checkout failure evidence, a Deployment version and a five-minute expiry.
 

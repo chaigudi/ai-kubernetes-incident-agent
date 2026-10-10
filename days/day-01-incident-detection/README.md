@@ -1,4 +1,4 @@
-# Day 1 — Find an incident using AI
+# Day 1 - Find an incident using AI
 
 **Completed: October 4, 2026.** Goal: give a model bounded, read-only tools to investigate a failing checkout.
 
@@ -63,4 +63,4 @@ pip install -r requirements.txt
 python -m unittest discover -s days/day-01-incident-detection/tests -v
 ```
 
-Next: [Day 2 — approve and verify a repair](../day-02-approved-remediation/README.md).
+Next: [Day 2 - approve and verify a repair](../day-02-approved-remediation/README.md).

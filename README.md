@@ -4,16 +4,17 @@ A hands-on series: investigate a Kubernetes incident with AI, then repair one su
 
 | Day | Built and tested | Start here |
 | --- | --- | --- |
-| 1 â€” October 4, 2026 | Read-only investigation using pod status, logs and events | [Incident detection](days/day-01-incident-detection/README.md) |
-| 2 â€” October 6, 2026 | Configuration evidence, guarded proposals, approval and verified remediation | [Approved remediation](days/day-02-approved-remediation/README.md) |
-| Next â€” planned | MCP tools, metrics and alert-driven investigation | [Roadmap](roadmap/README.md) |
+| 1 - October 4, 2026 | Read-only investigation using pod status, logs and events | [Incident detection](days/day-01-incident-detection/README.md) |
+| 2 - October 6, 2026 | Configuration evidence, guarded proposals, approval and verified remediation | [Approved remediation](days/day-02-approved-remediation/README.md) |
+| Next - planned | MCP tools, metrics and alert-driven investigation | [Roadmap](roadmap/README.md) |
 
 Day numbers represent project milestones, not consecutive calendar dates. Each completed day has its own runnable code and manifests. Deploy one day at a time: both use the same lab resource names.
 
 ```text
-AI investigator (read-only) â†’ proposed fix â†’ human approval
-                                             â†“
-                               separate executor â†’ recovery checks
+AI investigator (read-only) -> proposed fix -> human approval
+                                                    |
+                                                    v
+                                  separate executor -> recovery checks
 ```
 
 The lab uses Python, Kubernetes on AWS EC2, and KodeKloud's OpenAI-compatible model API. The demo checkout calls an inventory service; synthetic traffic makes failures visible even while pods remain Ready.

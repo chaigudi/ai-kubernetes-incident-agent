@@ -4,7 +4,7 @@ Use only the isolated `ai-sre-lab` namespace. Activate one fault at a time, allo
 the deployment/endpoints to settle, and run a fresh investigator Pod. The commands
 below are human-operated lab controls, never agent tools. Reset between cases.
 
-## 1. Incorrect dependency hostname â€” evaluated with the agent
+## 1. Incorrect dependency hostname - evaluated with the agent
 
 ```bash
 kubectl -n ai-sre-lab set env deployment/orders INVENTORY_URL=http://inventory-typo:8080/stock
